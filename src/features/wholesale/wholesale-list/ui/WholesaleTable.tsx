@@ -7,7 +7,6 @@ import {
   WholesaleSearchFilters,
 } from "@/entities/wholesale";
 import { SearchFilters } from "./SearchFilters";
-import { SaleStatusBadge } from "@/shared/ui/SaleStatusBadge";
 
 export function WholesaleTable() {
   const [products, setProducts] = useState<WholesaleProduct[]>([]);
@@ -127,9 +126,6 @@ export function WholesaleTable() {
                   사입 날짜
                 </th>
                 <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  판매 상태
-                </th>
-                <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   작업
                 </th>
               </tr>
@@ -184,11 +180,6 @@ export function WholesaleTable() {
                     <div className="text-sm text-gray-900">
                       {formatDate(product.purchase_date)}
                     </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <SaleStatusBadge
-                      status={product.sale_status || "SELLING"}
-                    />
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex space-x-2">
