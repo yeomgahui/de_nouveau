@@ -14,16 +14,21 @@ interface FormState {
   errors?: Record<string, string>;
 }
 
-function SubmitButton() {
+function SubmitButton({ isUploadingImages }: { isUploadingImages: boolean }) {
   const { pending } = useFormStatus();
+  const isDisabled = pending || isUploadingImages;
 
   return (
     <button
       type="submit"
-      disabled={pending}
+      disabled={isDisabled}
       className="w-full bg-gray-800 text-white py-4 px-8 rounded-none hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 focus:ring-offset-2 transition-all duration-300 font-medium text-lg tracking-wide uppercase letter-spacing-wider shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 disabled:opacity-50 disabled:cursor-not-allowed"
     >
-      {pending ? "등록 중..." : "상품 등록"}
+      {isUploadingImages
+        ? "이미지 처리 중..."
+        : pending
+        ? "Vercel Blob 업로드 중..."
+        : "상품 등록"}
     </button>
   );
 }
@@ -46,7 +51,13 @@ export function RegisterForm() {
   // 이미지 미리보기를 위한 상태
   const [imagePreviews, setImagePreviews] = useState<string[]>([]);
   const [selectedImages, setSelectedImages] = useState<File[]>([]);
+  const [imageBlobs, setImageBlobs] = useState<Blob[]>([]);
+  const [blobUrls, setBlobUrls] = useState<string[]>([]);
   const [mainImageIndex, setMainImageIndex] = useState(0);
+  const [isUploadingImages, setIsUploadingImages] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<Record<number, number>>(
+    {}
+  );
 
   // 사이즈 관리를 위한 상태
   const [sizes, setSizes] = useState<Record<string, string>>({});
@@ -84,37 +95,159 @@ export function RegisterForm() {
   // 성공 시 폼 초기화
   useEffect(() => {
     if (state?.success) {
+      // 기존 Blob URL들 정리
+      cleanupBlobUrls(imagePreviews);
+      cleanupBlobUrls(blobUrls);
+
       formRef.current?.reset();
       setImagePreviews([]);
       setSelectedImages([]);
+      setImageBlobs([]);
+      setBlobUrls([]);
       setMainImageIndex(0);
       setSizes({});
+      setIsUploadingImages(false);
+      setUploadProgress({});
+
+      console.log("폼이 초기화됨 - Vercel Blob 업로드 준비 완료");
     }
   }, [state?.success]);
 
   // URL query string에서 wholesale_id 처리
   const defaultWholesaleId = searchParams.get("wholesale_id");
 
-  // 이미지 업로드 핸들러
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 파일을 Blob으로 변환하는 함수
+  const convertFileToBlob = async (file: File): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const arrayBuffer = reader.result as ArrayBuffer;
+        const blob = new Blob([arrayBuffer], { type: file.type });
+        resolve(blob);
+      };
+      reader.onerror = () => reject(new Error("파일 읽기 실패"));
+      reader.readAsArrayBuffer(file);
+    });
+  };
+
+  // Blob URL 정리 함수
+  const cleanupBlobUrls = (urls: string[]) => {
+    urls.forEach((url) => {
+      if (url.startsWith("blob:")) {
+        URL.revokeObjectURL(url);
+      }
+    });
+  };
+
+  // 컴포넌트 언마운트 시 Blob URL 정리
+  useEffect(() => {
+    return () => {
+      cleanupBlobUrls(blobUrls);
+      cleanupBlobUrls(imagePreviews);
+    };
+  }, []);
+
+  // Blob URL 배열이 변경될 때마다 이전 URL들 정리
+  useEffect(() => {
+    return () => {
+      cleanupBlobUrls(blobUrls);
+    };
+  }, [blobUrls]);
+
+  // 이미지 업로드 핸들러 (Vercel Blob 최적화)
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (files.length === 0) return;
 
-    // 기존 이미지와 합쳐서 최대 10장까지
-    const newImages = [...selectedImages, ...files].slice(0, 10);
-    setSelectedImages(newImages);
+    // 파일 크기 및 형식 검증
+    const maxFileSize = 10 * 1024 * 1024; // 10MB
+    const allowedTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
 
-    // 미리보기 생성
-    const newPreviews = files.map((file) => URL.createObjectURL(file));
-    setImagePreviews((prev) => [...prev, ...newPreviews].slice(0, 10));
+    const invalidFiles = files.filter(
+      (file) => file.size > maxFileSize || !allowedTypes.includes(file.type)
+    );
+
+    if (invalidFiles.length > 0) {
+      alert(
+        `다음 파일들이 지원되지 않습니다:\n${invalidFiles
+          .map(
+            (f) =>
+              `${f.name} (${
+                f.size > maxFileSize ? "파일 크기 초과" : "지원되지 않는 형식"
+              })`
+          )
+          .join("\n")}\n\n지원 형식: JPEG, PNG, WebP (최대 10MB)`
+      );
+      return;
+    }
+
+    setIsUploadingImages(true);
+
+    try {
+      // 기존 이미지와 합쳐서 최대 10장까지
+      const newImages = [...selectedImages, ...files].slice(0, 10);
+      setSelectedImages(newImages);
+
+      // 새로운 파일들을 Blob으로 변환 (진행률 추적)
+      const newBlobs: Blob[] = [];
+      const newProgress: Record<number, number> = { ...uploadProgress };
+
+      for (let i = 0; i < files.length; i++) {
+        const fileIndex = selectedImages.length + i;
+        newProgress[fileIndex] = 0;
+        setUploadProgress({ ...newProgress });
+
+        const blob = await convertFileToBlob(files[i]);
+        newBlobs.push(blob);
+
+        newProgress[fileIndex] = 100;
+        setUploadProgress({ ...newProgress });
+      }
+
+      // 기존 Blob과 합치기
+      const updatedBlobs = [...imageBlobs, ...newBlobs].slice(0, 10);
+      setImageBlobs(updatedBlobs);
+
+      // 이전 Blob URL들 정리
+      cleanupBlobUrls(blobUrls);
+
+      // 새로운 Blob URL들 생성
+      const newBlobUrls = updatedBlobs.map((blob) => URL.createObjectURL(blob));
+      setBlobUrls(newBlobUrls);
+
+      // 미리보기용 URL 생성 (기존 방식과 호환성 유지)
+      const newPreviews = files.map((file) => URL.createObjectURL(file));
+      setImagePreviews((prev) => [...prev, ...newPreviews].slice(0, 10));
+
+      console.log(
+        `${files.length}개 이미지가 Blob으로 변환됨 (Vercel Blob 업로드 준비 완료)`
+      );
+    } catch (error) {
+      console.error("이미지 업로드 처리 중 오류:", error);
+      alert("이미지 업로드 중 오류가 발생했습니다. 파일을 다시 선택해주세요.");
+    } finally {
+      setIsUploadingImages(false);
+    }
   };
 
   const removeImage = (index: number) => {
+    // 제거될 URL 정리
+    if (imagePreviews[index] && imagePreviews[index].startsWith("blob:")) {
+      URL.revokeObjectURL(imagePreviews[index]);
+    }
+    if (blobUrls[index] && blobUrls[index].startsWith("blob:")) {
+      URL.revokeObjectURL(blobUrls[index]);
+    }
+
     const newImages = selectedImages.filter((_, i) => i !== index);
     const newPreviews = imagePreviews.filter((_, i) => i !== index);
+    const newBlobs = imageBlobs.filter((_, i) => i !== index);
+    const newBlobUrls = blobUrls.filter((_, i) => i !== index);
 
     setSelectedImages(newImages);
     setImagePreviews(newPreviews);
+    setImageBlobs(newBlobs);
+    setBlobUrls(newBlobUrls);
     setMainImageIndex(mainImageIndex >= newImages.length ? 0 : mainImageIndex);
   };
 
@@ -152,20 +285,39 @@ export function RegisterForm() {
     });
   };
 
-  // 폼 제출 전 사이즈 데이터를 숨겨진 input에 설정
-  const handleSubmit = (formData: FormData) => {
-    // 이미지 파일들 추가
-    selectedImages.forEach((image) => {
-      formData.append("images", image);
-    });
+  // 폼 제출 전 사이즈 데이터를 숨겨진 input에 설정 (Blob 기반)
+  const handleSubmit = async (formData: FormData) => {
+    try {
+      // Blob 데이터를 File 객체로 변환하여 추가
+      if (imageBlobs.length > 0) {
+        imageBlobs.forEach((blob, index) => {
+          // 원본 파일명을 유지하거나 기본 파일명 생성
+          const fileName =
+            selectedImages[index]?.name || `image_${index + 1}.jpg`;
+          const file = new File([blob], fileName, { type: blob.type });
+          formData.append("images", file);
+        });
+      } else {
+        // Blob이 없으면 기존 방식 사용 (후방 호환성)
+        selectedImages.forEach((image) => {
+          formData.append("images", image);
+        });
+      }
 
-    // 사이즈 데이터를 JSON 문자열로 변환하여 추가
-    formData.set("sizes", JSON.stringify(sizes));
+      // 사이즈 데이터를 JSON 문자열로 변환하여 추가
+      formData.set("sizes", JSON.stringify(sizes));
 
-    // 메인 이미지 인덱스 추가
-    formData.set("main_image_index", mainImageIndex.toString());
+      // 메인 이미지 인덱스 추가
+      formData.set("main_image_index", mainImageIndex.toString());
 
-    return formAction(formData);
+      // Blob URL 개수 정보 추가 (디버깅용)
+      formData.set("blob_count", imageBlobs.length.toString());
+
+      return formAction(formData);
+    } catch (error) {
+      console.error("폼 제출 처리 중 오류:", error);
+      alert("폼 제출 중 오류가 발생했습니다.");
+    }
   };
 
   if (categoriesLoading || wholesaleLoading) {
@@ -347,7 +499,7 @@ export function RegisterForm() {
           </label>
           <div className="space-y-3">
             {Object.entries(sizes).map(([key, value], index) => (
-              <div key={`${key}-${index}`} className="flex gap-3 items-center">
+              <div key={index} className="flex gap-3 items-center">
                 <input
                   type="text"
                   value={key}
@@ -457,14 +609,32 @@ export function RegisterForm() {
           <label className="block text-sm font-medium text-gray-600 mb-3 tracking-wide uppercase">
             상품 사진 (최대 10장)
             <span className="text-red-400 ml-1">*</span>
+            <span className="text-xs text-blue-600 ml-2 normal-case">
+              Blob 업로드 지원
+            </span>
           </label>
           <input
             type="file"
-            accept="image/*"
+            accept="image/jpeg,image/jpg,image/png,image/webp"
             multiple
             onChange={handleImageUpload}
-            className="w-full px-6 py-4 border-0 border-b-2 bg-gray-50 focus:outline-none focus:ring-0 focus:border-gray-400 transition-all duration-300 text-gray-800 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 border-gray-200 group-hover:border-gray-300"
+            disabled={isUploadingImages}
+            className={`w-full px-6 py-4 border-0 border-b-2 bg-gray-50 focus:outline-none focus:ring-0 focus:border-gray-400 transition-all duration-300 text-gray-800 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200 border-gray-200 group-hover:border-gray-300 ${
+              isUploadingImages ? "opacity-50 cursor-not-allowed" : ""
+            }`}
           />
+
+          {isUploadingImages && (
+            <div className="mt-2 flex items-center gap-2 text-sm text-blue-600">
+              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+              이미지를 Blob으로 변환 중...
+            </div>
+          )}
+
+          <div className="mt-2 text-xs text-gray-500">
+            지원 형식: JPEG, PNG, WebP | 최대 크기: 10MB | Vercel Blob Storage
+            사용
+          </div>
           {state?.errors?.images && (
             <p className="mt-2 text-sm text-red-500 font-light">
               {state.errors.images}
@@ -474,9 +644,14 @@ export function RegisterForm() {
           {/* 이미지 미리보기 */}
           {imagePreviews.length > 0 && (
             <div className="mt-3">
-              <p className="text-sm font-medium text-gray-700 mb-2">
-                업로드된 사진 ({imagePreviews.length}/10)
-              </p>
+              <div className="flex justify-between items-center mb-2">
+                <p className="text-sm font-medium text-gray-700">
+                  업로드된 사진 ({imagePreviews.length}/10)
+                </p>
+                <p className="text-xs text-green-600">
+                  ✓ Blob 처리됨 ({imageBlobs.length}개)
+                </p>
+              </div>
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                 {imagePreviews.map((preview, index) => (
                   <div key={index} className="relative group">
@@ -617,7 +792,7 @@ export function RegisterForm() {
 
         {/* 제출 버튼 */}
         <div className="flex justify-center pt-8">
-          <SubmitButton />
+          <SubmitButton isUploadingImages={isUploadingImages} />
         </div>
       </form>
     </div>

@@ -59,7 +59,7 @@ export async function registerWholesaleProduct(
       price,
       quantity,
       brand: brand.trim(),
-      order_number: order,
+      order,
       description: description?.trim() || null,
       purchase_date: purchase_date || null,
       created_at: new Date().toISOString(),

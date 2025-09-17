@@ -5,3 +5,4 @@ export type {
   ApiResponse,
   ProductSearchFilters,
 } from "./api/products";
+export { getProducts } from "./api/products";
