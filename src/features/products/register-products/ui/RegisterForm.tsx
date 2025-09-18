@@ -6,6 +6,8 @@ import { useFormStatus } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import { getCategories, Category } from "@/entities/categories";
 import { getWholesaleProducts, WholesaleProduct } from "@/entities/wholesale";
+import { getProductById, Product } from "@/entities/products";
+import { getProductImages } from "@/entities/products/api/images";
 import { registerProduct } from "../api/register-product";
 
 interface FormState {
@@ -62,6 +64,10 @@ export function RegisterForm() {
   // 사이즈 관리를 위한 상태
   const [sizes, setSizes] = useState<Record<string, string>>({});
 
+  // 기본 값 로딩 상태 및 데이터
+  const [defaultsLoading, setDefaultsLoading] = useState(false);
+  const [loadedProduct, setLoadedProduct] = useState<Product | null>(null);
+
   // 카테고리 및 도매 상품 데이터 로드
   useEffect(() => {
     async function loadData() {
@@ -115,6 +121,127 @@ export function RegisterForm() {
 
   // URL query string에서 wholesale_id 처리
   const defaultWholesaleId = searchParams.get("wholesale_id");
+  const defaultProductId = searchParams.get("product_id");
+
+  // product_id가 있는 경우 제품 상세 및 이미지 불러와 폼에 주입
+  useEffect(() => {
+    async function loadProductDefaults(productId: number) {
+      try {
+        setDefaultsLoading(true);
+        const detailRes = await getProductById(productId);
+        if (detailRes.success && detailRes.data) {
+          const product = detailRes.data;
+          setLoadedProduct(product);
+
+          // 사이즈 초기화
+          if (product.sizes) {
+            if (typeof product.sizes === "object") {
+              setSizes(product.sizes as Record<string, string>);
+            } else if (typeof product.sizes === "string") {
+              try {
+                const parsedSizes = JSON.parse(product.sizes) as Record<
+                  string,
+                  string
+                >;
+                if (parsedSizes && typeof parsedSizes === "object") {
+                  setSizes(parsedSizes);
+                }
+              } catch (e) {
+                console.warn("sizes 문자열 파싱 실패", e);
+              }
+            }
+          }
+
+          // 이미지 프리뷰: 원격 URL 표시 (재업로드는 선택 사항)
+          try {
+            const imagesRes = await getProductImages(productId);
+            if (imagesRes.success && imagesRes.data) {
+              const urls = imagesRes.data.map(
+                (img: any) => img.full_url || img.image_url
+              );
+              setImagePreviews(urls);
+              setBlobUrls(urls);
+              const mainIdx = imagesRes.data.findIndex(
+                (img: any) => img.is_main
+              );
+              setMainImageIndex(mainIdx >= 0 ? mainIdx : 0);
+            }
+          } catch (e) {
+            // 이미지 로드는 실패해도 폼 채우기는 계속
+            console.error("제품 이미지 로드 실패", e);
+          }
+
+          // 폼 필드 값 주입 (uncontrolled → 값 직접 설정)
+          const formEl = formRef.current;
+          if (formEl) {
+            const setValue = (name: string, value: string) => {
+              const el = formEl.querySelector(`[name="${name}"]`) as
+                | HTMLInputElement
+                | HTMLTextAreaElement
+                | HTMLSelectElement
+                | null;
+              if (el) el.value = value;
+            };
+
+            setValue("name", product.name ?? "");
+            setValue("category_id", String(product.category_id ?? ""));
+            setValue("price", String(product.price ?? ""));
+            setValue("quantity", String(product.quantity ?? ""));
+            const colorValue = Array.isArray(product.color)
+              ? product.color.join(", ")
+              : (product.color as unknown as string) || "";
+            setValue("color", colorValue);
+            setValue("description", product.description ?? "");
+            setValue("wholesale_id", String(product.wholesale_id ?? ""));
+
+            // 판매 상태 라디오 체크
+            const saleStatus = product.sale_status || "SELLING";
+            const radio = formEl.querySelector(
+              `input[name="sale_status"][value="${saleStatus}"]`
+            ) as HTMLInputElement | null;
+            if (radio) radio.checked = true;
+          }
+        }
+      } catch (error) {
+        console.error("제품 기본값 로드 오류:", error);
+      } finally {
+        setDefaultsLoading(false);
+      }
+    }
+
+    const pid = Number(defaultProductId);
+    if (!Number.isNaN(pid) && pid > 0) {
+      loadProductDefaults(pid);
+    }
+  }, [defaultProductId]);
+
+  // wholesale_id만 있는 경우 도매 상품 정보로 기본값 채우기
+  useEffect(() => {
+    const wid = Number(defaultWholesaleId);
+    if (loadedProduct) return; // product 우선
+    if (Number.isNaN(wid) || wid <= 0) return;
+    if (!wholesaleProducts || wholesaleProducts.length === 0) return;
+
+    const target = wholesaleProducts.find((w) => w.id === wid);
+    const formEl = formRef.current;
+    if (target && formEl) {
+      const setValue = (name: string, value: string) => {
+        const el = formEl.querySelector(`[name="${name}"]`) as
+          | HTMLInputElement
+          | HTMLTextAreaElement
+          | HTMLSelectElement
+          | null;
+        if (el && !el.value) el.value = value; // 사용자가 입력 전인 경우에만 설정
+      };
+
+      setValue("name", target.name ?? "");
+      setValue("price", String(target.price ?? ""));
+      setValue("quantity", String(target.quantity ?? ""));
+      if (target.description) setValue("description", target.description);
+      // 도매 선택 기본값은 기존 defaultValue로도 세팅되지만 보장 차원에서 한 번 더
+      setValue("wholesale_id", String(target.id));
+    }
+  }, [defaultWholesaleId, wholesaleProducts, loadedProduct]);
 
   // 파일을 Blob으로 변환하는 함수
   const convertFileToBlob = async (file: File): Promise<Blob> => {

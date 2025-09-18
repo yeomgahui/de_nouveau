@@ -164,10 +164,10 @@ export function ProductTable() {
                     <div className="flex space-x-2">
                       <a
                         onClick={(e) => e.stopPropagation()}
-                        href={`/admin/product/register?wholesale_id=${p.wholesale_id}`}
+                        href={`/admin/product/register?product_id=${p.id}`}
                         className="inline-flex items-center px-3 py-1.5 bg-green-600 text-white text-sm rounded-md hover:bg-green-700 transition-colors duration-200 font-medium"
                       >
-                        상세/등록
+                        수정
                       </a>
                     </div>
                   </td>

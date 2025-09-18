@@ -61,6 +61,3 @@ export function extractFileName(fullPath: string): string {
 export function getFileExtension(fileName: string): string {
   return fileName.split(".").pop() || "jpg";
 }
-
-
-

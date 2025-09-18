@@ -11,7 +11,6 @@ export interface Product {
   wholesale_id: number;
   sale_status: SaleStatus; // is_visible 대신 sale_status 사용
   sizes?: Record<string, string>;
-  main_image_index: number;
   created_at: string;
   updated_at: string;
 }
@@ -80,6 +79,31 @@ export async function getProducts(
     return {
       success: false,
       message: "제품 목록을 불러오는 중 오류가 발생했습니다.",
+    };
+  }
+}
+
+// 제품 상세 조회 API 호출 함수
+export async function getProductById(
+  id: number
+): Promise<ApiResponse<Product>> {
+  try {
+    const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3000";
+    const url = `${baseUrl}/api/products/${id}`;
+
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    });
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error("제품 상세 조회 실패:", error);
+    return {
+      success: false,
+      message: "제품 상세를 불러오는 중 오류가 발생했습니다.",
     };
   }
 }

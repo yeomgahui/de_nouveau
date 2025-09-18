@@ -11,7 +11,7 @@ if (!supabaseUrl || !supabaseKey) {
 export const supabase = createClient(supabaseUrl, supabaseKey);
 
 // 서버 사이드용 (Service Role 키 - 관리자 권한)
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE;
+const supabaseServiceKey = process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE;
 
 if (!supabaseServiceKey) {
   throw new Error("Supabase Service Role key is not set");
