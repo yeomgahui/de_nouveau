@@ -5,10 +5,11 @@ import { list } from "@vercel/blob";
 
 export async function GET(
   _request: NextRequest,
-  context: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
-    const id = Number(context.params.id);
+    const params = await context.params;
+    const id = Number(params.id);
     if (Number.isNaN(id)) {
       return NextResponse.json(
         { success: false, message: "유효하지 않은 ID" },
